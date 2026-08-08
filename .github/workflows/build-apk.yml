@@ -32,6 +32,13 @@ permissions:
 env:
   CI_ABI_FILTERS: ${{ vars.CI_ABI_FILTERS || 'arm64-v8a' }}
   CI_BUILD_VARIANTS: ${{ vars.CI_BUILD_VARIANTS || 'prodStore' }}
+  # A distinct application ID so this build coexists with official Molly instead
+  # of colliding with it. Sharing `im.molly.app` makes installs fail with
+  # INSTALL_FAILED_UPDATE_INCOMPATIBLE whenever the officially-signed package is
+  # present anywhere on the device, including in another user profile.
+  CI_PACKAGE_ID: ${{ vars.CI_PACKAGE_ID || 'im.molly.app.self' }}
+  CI_APP_TITLE: ${{ vars.CI_APP_TITLE || 'Molly Self' }}
+  CI_APP_FILENAME: ${{ vars.CI_APP_FILENAME || 'Molly-self' }}
   HAVE_KEYSTORE: ${{ secrets.SECRET_KEYSTORE != '' }}
 
 jobs:
