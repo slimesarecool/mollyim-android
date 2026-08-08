@@ -80,12 +80,27 @@ class RegisterLinkDeviceQrFragment : ComposeFragment() {
     super.onViewCreated(view, savedInstanceState)
 
     viewLifecycleOwner.lifecycle.addObserver(object : DefaultLifecycleObserver {
+      private var wasStopped = false
+
+      override fun onStart(owner: LifecycleOwner) {
+        // The screen can be gone for a while (e.g. switching users/profiles, which resets Wi-Fi), so make sure we
+        // come back with a QR code that is actually still connected instead of a stale one.
+        if (wasStopped) {
+          wasStopped = false
+          viewModel.refreshQrCode()
+        }
+      }
+
       override fun onResume(owner: LifecycleOwner) {
         requireActivity().window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
       }
 
       override fun onPause(owner: LifecycleOwner) {
         requireActivity().window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+      }
+
+      override fun onStop(owner: LifecycleOwner) {
+        wasStopped = true
       }
     })
 

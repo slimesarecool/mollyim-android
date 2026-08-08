@@ -39,6 +39,7 @@ import java.io.Closeable
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -57,6 +58,8 @@ class ProvisioningSocket<T> private constructor(
     @Volatile private var nextSocketId = 1000
 
     val LIFESPAN = 90.seconds
+
+    private const val KEEPALIVE_INTERVAL_SECONDS = 30L
 
     fun <T> start(
       mode: Mode,
@@ -112,10 +115,19 @@ class ProvisioningSocket<T> private constructor(
   }
 
   private val serviceUrl = configuration.signalServiceUrls.chooseUrl()
+
+  // MOLLY: Enable protocol-level pings so a network that disappears without a TCP reset (e.g. Wi-Fi being
+  // torn down by a user/profile switch) is detected in seconds instead of leaving a dead QR code on screen.
   private val okhttp = serviceUrl.buildOkHttpClient(configuration)
+    .newBuilder()
+    .pingInterval(KEEPALIVE_INTERVAL_SECONDS, TimeUnit.SECONDS)
+    .build()
 
   private val cipher = SecondaryProvisioningCipher(identityKeyPair)
   private var webSocket: WebSocket? = null
+
+  @Volatile
+  private var closedLocally = false
 
   private val provisioningUrlDeferral: CompletableDeferred<String> = CompletableDeferred()
   private val provisioningMessageDeferral: CompletableDeferred<SecondaryProvisioningCipher.ProvisioningDecryptResult<T>> = CompletableDeferred()
@@ -143,6 +155,7 @@ class ProvisioningSocket<T> private constructor(
   }
 
   private fun close() {
+    closedLocally = true
     webSocket?.close(1000, "Manual shutdown")
   }
 
@@ -236,7 +249,13 @@ class ProvisioningSocket<T> private constructor(
           webSocket.close(1000, "Remote closed with code $code")
         }
 
-        scope.cancel()
+        if (closedLocally || provisioningMessageDeferral.isCompleted) {
+          scope.cancel()
+        } else {
+          // MOLLY: Report closes that happen before provisioning completed, otherwise the caller never learns
+          // that the QR code it is displaying is dead and keeps showing it forever.
+          scope.cancel(CancellationException("Web socket closed before provisioning completed", IOException("Web socket closed with code $code")))
+        }
       }
     }
 
@@ -258,7 +277,7 @@ class ProvisioningSocket<T> private constructor(
     private suspend fun keepAlive(webSocket: WebSocket) {
       Log.i(TAG, "[$id] [keepAlive] Starting")
       while (true) {
-        delay(30.seconds)
+        delay(KEEPALIVE_INTERVAL_SECONDS.seconds)
         Log.i(TAG, "[$id] [keepAlive] Sending...")
 
         val id = System.currentTimeMillis()
@@ -273,6 +292,9 @@ class ProvisioningSocket<T> private constructor(
 
         if (!webSocket.send(message.encodeByteString())) {
           Log.w(TAG, "[${this@ProvisioningSocket.id}] [keepAlive] Send failed")
+          // MOLLY: A failed send means the socket is already gone, so tear it down instead of pretending it is alive.
+          scope.cancel(CancellationException("Keep alive send failed", IOException("Unable to send keep alive")))
+          return
         } else {
           lastKeepAliveId = id
         }
