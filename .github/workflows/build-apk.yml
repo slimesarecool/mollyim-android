@@ -1,0 +1,101 @@
+name: Build APK
+
+# Builds an installable release APK on every push.
+#
+# Scoped down from the full Release workflow for fast device builds:
+#   - arm64-v8a only (Pixel and every other modern 64-bit ARM device)
+#   - a single product flavor
+#   - APK only, no App Bundle
+#
+# The APK is signed when the SECRET_KEYSTORE secret is configured, and is
+# otherwise unsigned and NOT installable until signed by hand.
+
+on:
+  push:
+    branches:
+      - '**'
+      - '!upstream-main'
+    paths-ignore:
+      - '**/*.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/FUNDING.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read # to fetch code (actions/checkout)
+
+env:
+  CI_ABI_FILTERS: ${{ vars.CI_ABI_FILTERS || 'arm64-v8a' }}
+  CI_BUILD_VARIANTS: ${{ vars.CI_BUILD_VARIANTS || 'prodWebsite' }}
+  HAVE_KEYSTORE: ${{ secrets.SECRET_KEYSTORE != '' }}
+
+jobs:
+  build:
+    name: Build APK (${{ vars.CI_ABI_FILTERS || 'arm64-v8a' }})
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Free up disk space in runner
+        uses: ./.github/actions/disk-cleanup
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+
+      - name: Build Docker image
+        run: docker compose build
+        working-directory: reproducible-builds
+
+      - name: Extract signing keys
+        if: "env.HAVE_KEYSTORE == 'true'"
+        run: printenv KEYSTORE | base64 -d > certs/keystore.jks
+        working-directory: reproducible-builds
+        env:
+          KEYSTORE: ${{ secrets.SECRET_KEYSTORE }}
+
+      # `GRADLE_ARGS` is forwarded to Gradle by mk/android.mk. Excluding the
+      # bundle task skips the second R8 pass that produces the .aab.
+      - name: Build without signing
+        if: "env.HAVE_KEYSTORE == 'false'"
+        run: >
+          docker compose run --rm
+          -v "$GRADLE_USER_HOME/caches:/.gradle-ro-cache:ro"
+          assemble assemble "GRADLE_ARGS=-x :app:bundleRelease"
+        working-directory: reproducible-builds
+
+      - name: Build and sign
+        if: "env.HAVE_KEYSTORE == 'true'"
+        run: >
+          docker compose run --rm
+          -v "$GRADLE_USER_HOME/caches:/.gradle-ro-cache:ro"
+          assemble assemble "GRADLE_ARGS=-x :app:bundleRelease"
+        working-directory: reproducible-builds
+        env:
+          CI_KEYSTORE_PATH: certs/keystore.jks
+          CI_KEYSTORE_ALIAS: ${{ secrets.SECRET_KEYSTORE_ALIAS }}
+          CI_KEYSTORE_PASSWORD: ${{ secrets.SECRET_KEYSTORE_PASSWORD }}
+
+      - name: Clean up keystore
+        if: "always()"
+        run: rm -f certs/keystore.jks
+        working-directory: reproducible-builds
+
+      - name: Log APK checksums
+        run: find outputs -name "*.apk" -exec sha256sum '{}' +
+        working-directory: reproducible-builds
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: apk-${{ github.sha }}
+          path: reproducible-builds/outputs/apk/*/release/*.apk
+          if-no-files-found: error

@@ -45,6 +45,13 @@ val basePackageId = getCiEnv("CI_PACKAGE_ID") ?: properties["basePackageId"] as 
 val buildVariants = getCiEnv("CI_BUILD_VARIANTS") ?: properties["buildVariants"] as String
 val forceInternalUserFlag = getCiEnv("CI_FORCE_INTERNAL_USER_FLAG") ?: properties["forceInternalUserFlag"] as String
 
+// MOLLY: Restrict the packaged ABIs from CI, e.g. "arm64-v8a" to build for a single device.
+// Defaults to every ABI the app normally ships.
+val ciAbiFilters = (getCiEnv("CI_ABI_FILTERS") ?: "armeabi-v7a,arm64-v8a,x86_64")
+  .split(",")
+  .map { it.trim() }
+  .filter { it.isNotEmpty() }
+
 fun getCiEnv(name: String) = if (ciEnabled) System.getenv(name).takeUnless { it.isNullOrBlank() } else null
 
 wire {
@@ -221,7 +228,7 @@ android {
 
     ndk {
       //noinspection ChromeOsAbiSupport
-      abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
+      abiFilters += ciAbiFilters
     }
 
     testInstrumentationRunner = "org.thoughtcrime.securesms.testing.SignalTestRunner"

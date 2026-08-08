@@ -3,6 +3,10 @@ services:
     image: reproducible-molly
     build:
       context: ..
+      # Pin the final stage explicitly. Without this, builders that lack BuildKit
+      # fall back to building every stage in sequence and fail on `deps-override`,
+      # which only resolves with `--build-context maven-local=<path>`.
+      target: builder
     command: assemble
     volumes:
       - ./certs:/molly/app/certs:ro
@@ -12,6 +16,7 @@ services:
       - CI_APP_FILENAME
       - CI_PACKAGE_ID
       - CI_BUILD_VARIANTS
+      - CI_ABI_FILTERS
       - CI_FORCE_INTERNAL_USER_FLAG
       - CI_KEYSTORE_PATH
       - CI_KEYSTORE_PASSWORD
