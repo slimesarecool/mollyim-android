@@ -4,8 +4,13 @@ name: Build APK
 #
 # Scoped down from the full Release workflow for fast device builds:
 #   - arm64-v8a only (Pixel and every other modern 64-bit ARM device)
-#   - a single product flavor
+#   - the `store` flavor, which builds without Molly's in-app updater
 #   - APK only, no App Bundle
+#
+# The `store` flavor matters for self-signed builds. The `website` flavor sets
+# MANAGE_MOLLY_UPDATES=true, so the app downloads official releases signed with
+# Molly's key; installing one over a self-signed build fails with "App not
+# installed", because Android refuses a signing certificate change.
 #
 # The APK is signed when the SECRET_KEYSTORE secret is configured, and is
 # otherwise unsigned and NOT installable until signed by hand.
@@ -26,7 +31,7 @@ permissions:
 
 env:
   CI_ABI_FILTERS: ${{ vars.CI_ABI_FILTERS || 'arm64-v8a' }}
-  CI_BUILD_VARIANTS: ${{ vars.CI_BUILD_VARIANTS || 'prodWebsite' }}
+  CI_BUILD_VARIANTS: ${{ vars.CI_BUILD_VARIANTS || 'prodStore' }}
   HAVE_KEYSTORE: ${{ secrets.SECRET_KEYSTORE != '' }}
 
 jobs:
