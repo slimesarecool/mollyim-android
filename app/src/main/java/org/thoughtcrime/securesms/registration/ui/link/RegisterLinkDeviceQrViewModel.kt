@@ -10,12 +10,12 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import org.signal.core.util.logging.Log
 import org.signal.libsignal.protocol.IdentityKeyPair
 import org.thoughtcrime.securesms.components.settings.app.usernamelinks.QrCodeData
@@ -75,26 +75,29 @@ class RegisterLinkDeviceQrViewModel : ViewModel() {
       while (isActive) {
         startNewSocket()
 
-        // Rotate to a fresh socket periodically, or sooner if the one backing the visible QR code died.
-        awaitReconnectSignal(ProvisioningSocket.LIFESPAN / 2)
+        // MOLLY: Wait until a new socket is genuinely needed rather than rotating on a timer. Only a failure
+        // that happens before any QR code reaches the screen asks for one, so a displayed code is never
+        // swapped out from under the user.
+        reconnectNow.receive()
 
         val failures = consecutiveFailures.get()
         if (failures > 0) {
-          awaitReconnectSignal(reconnectDelay(failures))
+          delay(reconnectDelay(failures))
         }
       }
     }
   }
 
   /**
-   * Called when the screen becomes visible again. Switching users/profiles (notably on GrapheneOS) resets Wi-Fi and
-   * kills the provisioning socket, so grab a fresh socket right away rather than leaving a dead QR code on screen or
-   * waiting out a reconnect backoff. The previous socket stays open until it rotates out, so a code that was already
-   * scanned or photographed keeps working.
+   * Called when the screen becomes visible again. Only useful when the first connection never produced a code, e.g.
+   * the screen was opened while offline.
+   *
+   * MOLLY: A code that is already displayed is deliberately left alone, even though its socket may be long dead, so
+   * that toggling Wi-Fi or switching users/profiles never changes the code the user is looking at.
    */
   fun refreshQrCode() {
     val current = store.value
-    if (current.isRegistering || current.qrState is QrState.Scanned) {
+    if (current.isRegistering || current.qrState is QrState.Scanned || current.qrState is QrState.Loaded) {
       return
     }
 
@@ -108,10 +111,6 @@ class RegisterLinkDeviceQrViewModel : ViewModel() {
       store.update { if (it.qrState is QrState.Failed) it.copy(qrState = QrState.Loading) else it }
       reconnectNow.trySend(Unit)
     }
-  }
-
-  private suspend fun awaitReconnectSignal(timeout: Duration) {
-    withTimeoutOrNull(timeout) { reconnectNow.receive() }
   }
 
   private fun reconnectDelay(failures: Int): Duration {
@@ -130,9 +129,7 @@ class RegisterLinkDeviceQrViewModel : ViewModel() {
   }
 
   /**
-   * A socket died. Unlike a failed registration this is almost always transient (network blip, profile switch,
-   * server-side timeout), so never stop reconnecting -- just drop the QR code it was backing and ask the loop for a
-   * new one.
+   * A socket died. Retry only while no QR code has been shown yet; once one is on screen it stays there.
    */
   private fun onSocketFailure(id: Int, t: Throwable) {
     val current = store.value
@@ -144,6 +141,14 @@ class RegisterLinkDeviceQrViewModel : ViewModel() {
 
     if (current.currentSocketId != null && current.currentSocketId != id) {
       Log.i(TAG, "Old socket [$id] failed, ignoring")
+      return
+    }
+
+    // MOLLY: Keep the displayed code even though its socket is gone and it can no longer be used to link.
+    // Regenerating is the only way to stay linkable, but it also changes the code mid-scan, which is worse
+    // for this workflow. The user retries explicitly instead.
+    if (current.qrState is QrState.Loaded) {
+      Log.w(TAG, "Current socket [$id] failed, keeping the displayed QR code (it will no longer link)", t)
       return
     }
 
