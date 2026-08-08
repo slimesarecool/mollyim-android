@@ -45,6 +45,10 @@ val basePackageId = getCiEnv("CI_PACKAGE_ID") ?: properties["basePackageId"] as 
 val buildVariants = getCiEnv("CI_BUILD_VARIANTS") ?: properties["buildVariants"] as String
 val forceInternalUserFlag = getCiEnv("CI_FORCE_INTERNAL_USER_FLAG") ?: properties["forceInternalUserFlag"] as String
 
+// MOLLY: Version name for CI builds of untagged commits, e.g. a branch build. When this is
+// unset, CI builds still require the commit to be an exact tag.
+val ciVersionName = getCiEnv("CI_VERSION_NAME")
+
 // MOLLY: Restrict the packaged ABIs from CI, e.g. "arm64-v8a" to build for a single device.
 // Defaults to every ABI the app normally ships.
 val ciAbiFilters = (getCiEnv("CI_ABI_FILTERS") ?: "armeabi-v7a,arm64-v8a,x86_64")
@@ -168,7 +172,7 @@ android {
     val sourceVersionNameWithRevision = "${canonicalVersionName}-${mollyRevision}"
 
     versionCode = (canonicalVersionCode * maxHotfixVersions) + mollyRevision + currentHotfixVersion
-    versionName = if (ciEnabled) requireCommitTag() else sourceVersionNameWithRevision
+    versionName = if (ciEnabled) (ciVersionName ?: requireCommitTag()) else sourceVersionNameWithRevision
 
     minSdk = libs.versions.minSdk.get().toInt()
     targetSdk = libs.versions.targetSdk.get().toInt()

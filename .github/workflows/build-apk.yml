@@ -51,6 +51,11 @@ jobs:
         with:
           cache-read-only: true
 
+      # Untagged commits have no version name. `requireCommitTag()` in
+      # app/build.gradle.kts aborts the build unless CI_VERSION_NAME is supplied.
+      - name: Derive version name
+        run: echo "CI_VERSION_NAME=${GITHUB_REF_NAME//\//-}-$(git rev-parse --short=7 HEAD)" >> $GITHUB_ENV
+
       - name: Build Docker image
         run: docker compose build
         working-directory: reproducible-builds
