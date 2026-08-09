@@ -40,6 +40,7 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -57,7 +58,10 @@ class ProvisioningSocket<T> private constructor(
 
     @Volatile private var nextSocketId = 1000
 
-    val LIFESPAN = 90.seconds
+    // MOLLY: Upstream uses 90 seconds, which is far too short to screenshot the code, switch to another
+    // user/profile, scan it there, and switch back. Keepalives run every 30 seconds, so a longer window
+    // only costs a held-open websocket. The server may still close it sooner, which is reported normally.
+    val LIFESPAN = 10.minutes
 
     private const val KEEPALIVE_INTERVAL_SECONDS = 30L
 
